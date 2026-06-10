@@ -1,0 +1,19 @@
+* {
+    font-family: "DM Sans";
+    scroll-behavior: smooth;
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #27ae60aa;
+    border-radius: 10px;
+}
