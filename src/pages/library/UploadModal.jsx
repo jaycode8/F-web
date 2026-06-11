@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { X, Upload, HardDrive, Camera, Link as LinkIcon, FileText, FileArchive, FileAudio, FileVideo, File, Image } from "lucide-react";
+import { X, Upload, HardDrive, Camera, Link as LinkIcon, FileText, FileArchive, FileAudio, FileVideo, File, Image, CheckCircle, AlertCircle } from "lucide-react";
+import axios from "axios";
 import api from "../helpers/Api.jsx";
 import { useToast } from "../context/Toast.jsx";
 
@@ -11,16 +12,89 @@ const formatBytes = (bytes) => {
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 };
 
-const fileIcon = (type) => {
-    const cls = "w-4 h-4";
-    switch (type) {
-        case "image": return <Image className={cls} />;
-        case "video": return <FileVideo className={cls} />;
-        case "audio": return <FileAudio className={cls} />;
-        case "document": return <FileText className={cls} />;
-        case "archive": return <FileArchive className={cls} />;
-        default: return <File className={cls} />;
+const getCategory = (mimeType) => {
+    if (mimeType.startsWith("image/")) return "image";
+    if (mimeType.startsWith("video/")) return "video";
+    if (mimeType.startsWith("audio/")) return "audio";
+    if (mimeType.startsWith("application/") || mimeType.startsWith("text/")) return "document";
+    return "other";
+};
+
+const buildMetadata = (file) => {
+    const category = getCategory(file.type);
+
+    if (category === "image") {
+        return new Promise((resolve) => {
+            const img = new window.Image();
+            const url = URL.createObjectURL(file);
+            img.onload = () => {
+                const w = img.naturalWidth;
+                const h = img.naturalHeight;
+                const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+                const d = gcd(w, h);
+                URL.revokeObjectURL(url);
+                resolve({ width: w, height: h, aspectRatio: `${w / d}:${h / d}`, thumbnailGenerated: false });
+            };
+            img.onerror = () => { URL.revokeObjectURL(url); resolve({}); };
+            img.src = url;
+        });
     }
+
+    if (category === "video") {
+        return new Promise((resolve) => {
+            const video = document.createElement("video");
+            const url = URL.createObjectURL(file);
+            video.onloadedmetadata = () => {
+                const w = video.videoWidth;
+                const h = video.videoHeight;
+                const duration = Math.round(video.duration);
+                URL.revokeObjectURL(url);
+                resolve({
+                    width: w, height: h,
+                    durationSeconds: duration,
+                    durationFormatted: `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, "0")}`,
+                });
+            };
+            video.onerror = () => { URL.revokeObjectURL(url); resolve({}); };
+            video.src = url;
+        });
+    }
+
+    if (category === "audio") {
+        return new Promise((resolve) => {
+            const audio = document.createElement("audio");
+            const url = URL.createObjectURL(file);
+            audio.onloadedmetadata = () => {
+                const duration = Math.round(audio.duration);
+                URL.revokeObjectURL(url);
+                resolve({
+                    durationSeconds: duration,
+                    durationFormatted: `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, "0")}`,
+                    codec: file.type.split("/")[1] ?? null,
+                });
+            };
+            audio.onerror = () => { URL.revokeObjectURL(url); resolve({}); };
+            audio.src = url;
+        });
+    }
+
+    if (category === "document") {
+        return Promise.resolve({
+            extension: file.name.split(".").pop()?.toLowerCase() ?? null,
+            mimeSubtype: file.type.split("/")[1] ?? null,
+        });
+    }
+
+    return Promise.resolve({ extension: file.name.split(".").pop()?.toLowerCase() ?? null });
+};
+
+const fileIcon = (mimeType) => {
+    const cls = "w-4 h-4 shrink-0";
+    if (mimeType?.startsWith("image/")) return <Image className={cls} />;
+    if (mimeType?.startsWith("video/")) return <FileVideo className={cls} />;
+    if (mimeType?.startsWith("audio/")) return <FileAudio className={cls} />;
+    if (mimeType?.startsWith("application/") || mimeType?.startsWith("text/")) return <FileText className={cls} />;
+    return <File className={cls} />;
 };
 
 const UploadModal = ({ open, onClose, parentId, onUploaded }) => {
@@ -65,7 +139,7 @@ const UploadModal = ({ open, onClose, parentId, onUploaded }) => {
         canvas.getContext("2d").drawImage(cameraRef.current, 0, 0);
         canvas.toBlob(blob => {
             const f = new File([blob], `capture-${Date.now()}.jpg`, { type: "image/jpeg" });
-            setFiles(p => [...p, f]);
+            addFiles([f]);
             stopCamera();
             setSource("device");
         }, "image/jpeg", 0.92);
@@ -73,8 +147,11 @@ const UploadModal = ({ open, onClose, parentId, onUploaded }) => {
 
     const addFiles = (incoming) => {
         setFiles(p => {
-            const existing = new Set(p.map(f => f.name + f.size));
-            return [...p, ...[...incoming].filter(f => !existing.has(f.name + f.size))];
+            const existing = new Set(p.map(f => f.file.name + f.file.size));
+            const fresh = [...incoming]
+                .filter(f => !existing.has(f.name + f.size))
+                .map(f => ({ file: f, status: "idle", progress: 0, error: null }));
+            return [...p, ...fresh];
         });
     };
 
@@ -84,25 +161,70 @@ const UploadModal = ({ open, onClose, parentId, onUploaded }) => {
         addFiles(e.dataTransfer.files);
     };
 
+    const updateFile = (index, patch) =>
+        setFiles(p => p.map((item, i) => i === index ? { ...item, ...patch } : item));
+
     const handleUpload = async () => {
         if (!files.length) return;
         setUploading(true);
-        try {
-            const form = new FormData();
-            files.forEach(f => form.append("files", f));
-            if (parentId) form.append("folderId", parentId);
-            await api.post("/files/upload", form, { headers: { "Content-Type": "multipart/form-data" } });
-            toast.success(`${files.length} file${files.length > 1 ? "s" : ""} uploaded`);
+
+        const results = await Promise.allSettled(
+            files.map(async ({ file }, index) => {
+                updateFile(index, { status: "uploading", progress: 0, error: null });
+
+                const tokenRes = await api.post("/files/upload-url", {
+                    originalName: file.name,
+                    mimeType: file.type,
+                });
+                const { uploadUrl, filename, absolutePath } = tokenRes.data.data;
+
+                await axios.put(uploadUrl, file, {
+                    headers: { "Content-Type": file.type },
+                    onUploadProgress: (e) => {
+                        const pct = Math.round((e.loaded * 100) / e.total);
+                        updateFile(index, { progress: pct });
+                    },
+                });
+
+                await api.post("/files", {
+                    folderId: parentId ?? null,
+                    category: getCategory(file.type),
+                    mimeType: file.type,
+                    filename,
+                    originalName: file.name,
+                    absolutePath,
+                    fileSizeBytes: file.size,
+                    metadata: await buildMetadata(file),
+                });
+
+                updateFile(index, { status: "done", progress: 100 });
+            })
+        );
+
+        const failed = results.filter(r => r.status === "rejected").length;
+        const succeeded = results.length - failed;
+
+        results.forEach((r, i) => {
+            if (r.status === "rejected") {
+                const msg = r.reason?.response?.data?.detail || r.reason?.message || "Failed";
+                updateFile(i, { status: "error", error: msg });
+            }
+        });
+
+        if (succeeded > 0) {
+            toast.success(`${succeeded} file${succeeded > 1 ? "s" : ""} uploaded`);
             onUploaded();
-            onClose();
-        } catch (err) {
-            toast.error(err?.response?.data?.detail || "Upload failed");
-        } finally {
-            setUploading(false);
         }
+        if (failed > 0) toast.error(`${failed} file${failed > 1 ? "s" : ""} failed`);
+
+        setUploading(false);
+        if (failed === 0) onClose();
     };
 
     if (!open) return null;
+
+    const allDone = files.length > 0 && files.every(f => f.status === "done");
+    const hasIdle = files.some(f => f.status === "idle");
 
     const sources = [
         { id: "device", label: "My Device", icon: <HardDrive size={22} />, active: true },
@@ -124,11 +246,12 @@ const UploadModal = ({ open, onClose, parentId, onUploaded }) => {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={!uploading ? onClose : undefined} />
             <div className="relative bg-card border border-border rounded-2xl w-full max-w-lg shadow-2xl">
                 <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-border">
                     <h2 className="text-base font-bold text-text">Upload files</h2>
-                    <button onClick={onClose} className="text-muted hover:text-text transition-colors p-1 rounded-lg hover:bg-surface">
+                    <button onClick={onClose} disabled={uploading}
+                        className="text-muted hover:text-text transition-colors p-1 rounded-lg hover:bg-surface disabled:opacity-40 disabled:cursor-not-allowed">
                         <X size={16} />
                     </button>
                 </div>
@@ -138,14 +261,14 @@ const UploadModal = ({ open, onClose, parentId, onUploaded }) => {
                         {sources.map(s => (
                             <button key={s.id}
                                 onClick={() => {
-                                    if (!s.active) return;
+                                    if (!s.active || uploading) return;
                                     setSource(s.id);
                                     if (s.id === "camera") startCamera();
                                     else stopCamera();
                                 }}
                                 className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border transition-all duration-150
                                     ${s.id === source && s.active ? "border-primary bg-primary/10 text-primary" : "border-border text-muted"}
-                                    ${s.active ? "hover:border-primary/50 hover:text-text cursor-pointer" : "opacity-40 cursor-not-allowed"}`}
+                                    ${s.active && !uploading ? "hover:border-primary/50 hover:text-text cursor-pointer" : "opacity-40 cursor-not-allowed"}`}
                             >
                                 {s.icon}
                                 <span className="text-[11px] font-medium leading-tight text-center">{s.label}</span>
@@ -177,12 +300,7 @@ const UploadModal = ({ open, onClose, parentId, onUploaded }) => {
                                         className="flex-1 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:bg-secondary transition-colors">
                                         Capture
                                     </button>
-                                    <button
-                                        onClick={() => {
-                                            const m = facingMode === "user" ? "environment" : "user";
-                                            setFacingMode(m);
-                                            startCamera(m);
-                                        }}
+                                    <button onClick={() => { const m = facingMode === "user" ? "environment" : "user"; setFacingMode(m); startCamera(m); }}
                                         className="px-3 py-2.5 border border-border text-muted hover:text-text rounded-xl text-xs font-medium hover:bg-surface transition-colors">
                                         Flip
                                     </button>
@@ -191,7 +309,7 @@ const UploadModal = ({ open, onClose, parentId, onUploaded }) => {
                         </div>
                     )}
 
-                    {source === "device" && (
+                    {source === "device" && !uploading && (
                         <div
                             onDragOver={e => { e.preventDefault(); setDragging(true); }}
                             onDragLeave={() => setDragging(false)}
@@ -208,27 +326,48 @@ const UploadModal = ({ open, onClose, parentId, onUploaded }) => {
                     )}
 
                     {files.length > 0 && (
-                        <ul className="space-y-1.5 max-h-40 overflow-y-auto">
-                            {files.map((f, i) => (
-                                <li key={i} className="group flex items-center gap-3 px-3 py-2 rounded-lg bg-surface border border-border">
-                                    <span className="text-muted">{fileIcon(f.type.split("/")[0])}</span>
-                                    <span className="flex-1 text-xs text-text truncate">{f.name}</span>
-                                    <span className="text-xs text-muted shrink-0">{formatBytes(f.size)}</span>
-                                    <button onClick={() => setFiles(p => p.filter((_, j) => j !== i))}
-                                        className="opacity-0 group-hover:opacity-100 text-muted hover:text-danger transition-all">
-                                        <X size={13} />
-                                    </button>
+                        <ul className="space-y-2 max-h-52 overflow-y-auto">
+                            {files.map(({ file, status, progress, error }, i) => (
+                                <li key={i} className="group flex flex-col gap-1.5 px-3 py-2.5 rounded-xl bg-surface border border-border">
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-muted">{fileIcon(file.type)}</span>
+                                        <span className="flex-1 text-xs text-text truncate">{file.name}</span>
+                                        <span className="text-xs text-muted shrink-0">{formatBytes(file.size)}</span>
+                                        {status === "done" && <CheckCircle size={14} className="text-success shrink-0" />}
+                                        {status === "error" && <AlertCircle size={14} className="text-danger shrink-0" />}
+                                        {status === "idle" && !uploading && (
+                                            <button onClick={() => setFiles(p => p.filter((_, j) => j !== i))}
+                                                className="opacity-0 group-hover:opacity-100 text-muted hover:text-danger transition-all">
+                                                <X size={13} />
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {(status === "uploading" || status === "done") && (
+                                        <div className="w-full h-1 rounded-full bg-border overflow-hidden">
+                                            <div
+                                                className={`h-full rounded-full transition-all duration-300 ${status === "done" ? "bg-success" : "bg-primary"}`}
+                                                style={{ width: `${progress}%` }}
+                                            />
+                                        </div>
+                                    )}
+
+                                    {status === "error" && (
+                                        <p className="text-[11px] text-danger truncate">{error}</p>
+                                    )}
                                 </li>
                             ))}
                         </ul>
                     )}
 
-                    {files.length > 0 && (
+                    {hasIdle && !allDone && (
                         <button onClick={handleUpload} disabled={uploading}
                             className="w-full py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:bg-secondary
-                                transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                            {uploading && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                            {uploading ? "Uploading..." : `Upload ${files.length} file${files.length > 1 ? "s" : ""}`}
+                                transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                            {uploading
+                                ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Uploading...</>
+                                : `Upload ${files.filter(f => f.status === "idle").length} file${files.filter(f => f.status === "idle").length > 1 ? "s" : ""}`
+                            }
                         </button>
                     )}
                 </div>

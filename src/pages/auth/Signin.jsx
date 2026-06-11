@@ -76,7 +76,7 @@ const SignIn = () => {
             const callbackUrl = urlParams.get("callback");
 
             setTimeout(() => {
-                navigate("/dashboard");
+                navigate("/library");
             }, 1000);
 
         } catch (err) {
@@ -92,7 +92,7 @@ const SignIn = () => {
             <div className="hidden lg:flex lg:w-[65%] relative overflow-hidden shrink-0">
                 <img
                     src={`/imgs/signin.jpeg`}
-                    alt="Qwin POS signin"
+                    alt="signin cover"
                     className="absolute inset-0 w-full h-full object-cover"
                 />
                 <div className="absolute inset-0 bg-bg/65 transition-colors duration-300" />

@@ -1,11 +1,10 @@
-import { useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, Outlet } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import "./App.css";
 import api from "./pages/helpers/Api";
 import SignIn from "./pages/auth/Signin";
 import Library from "./pages/library/Library";
-import FolderDetails from "./pages/library/FolderDetails";
+import TopBar from "./pages/partials/Topbar.jsx";
 
 const checkAuth = () => api.get("/auth").then(r => r.data.data);
 
@@ -35,41 +34,19 @@ const ProtectedRoute = () => {
     return <Outlet />;
 };
 
-// const PosLayout = ({ children }) => {
-//     const [openSideBar, setOpenSideBar] = useState(false);
-//     const [collapsed, setCollapsed] = useState(() => {
-//         return localStorage.getItem("sidebarCollapsed") === "true";
-//     });
-//
-//     const toggleSideBar = () => setOpenSideBar(p => !p);
-//
-//     return (
-//         <div className="min-h-dvh bg-surface overflow-x-hidden">
-//             <SideBar
-//                 openSideBar={openSideBar}
-//                 toggleSideBar={toggleSideBar}
-//                 collapsed={collapsed}
-//                 setCollapsed={setCollapsed}
-//             />
-//             <TopBar
-//                 toggleSideBar={toggleSideBar}
-//                 collapsed={collapsed}
-//             />
-//             {openSideBar && (
-//                 <div
-//                     className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm lg:hidden"
-//                     onClick={toggleSideBar}
-//                 />
-//             )}
-//             <main className={`pt-14 min-h-screen transition-all duration-300
-//                 ${collapsed ? "lg:pl-16" : "lg:pl-60"}`}>
-//                 <div className="p-4 sm:p-6">
-//                     {children}
-//                 </div>
-//             </main>
-//         </div>
-//     );
-// };
+const MainLayout = ({ children }) => {
+
+    return (
+        <div className="min-h-dvh bg-surface overflow-x-hidden">
+            <TopBar />
+            <main className={`pt-14 min-h-dvh transition-all duration-300`}>
+                <div className="p-4 sm:p-6">
+                    {children}
+                </div>
+            </main>
+        </div>
+    );
+};
 
 const App = () => {
     return (
@@ -78,9 +55,7 @@ const App = () => {
                 <Route path="/signin" element={<SignIn />} />
 
                 <Route element={<ProtectedRoute />}>
-                    {/* <Route path="/" element={<PosLayout><Dashboard /></PosLayout>} /> */}
-                    <Route path="/library" element={<Library />} />
-                    <Route path="/folder/:id" element={<FolderDetails />} />
+                    <Route path="/library" element={<MainLayout><Library /></MainLayout>} />
                 </Route>
 
                 {/* <Route path="*" element={<Navigate to="/" replace />} /> */}
