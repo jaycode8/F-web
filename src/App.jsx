@@ -58,7 +58,7 @@ const App = () => {
                     <Route path="/library" element={<MainLayout><Library /></MainLayout>} />
                 </Route>
 
-                {/* <Route path="*" element={<Navigate to="/" replace />} /> */}
+                <Route path="*" element={<Navigate to="/library" replace />} />
             </Routes>
         </BrowserRouter>
     );

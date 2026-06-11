@@ -28,6 +28,11 @@ const fileIcon = (mimeType) => {
     return <File className={cls} />;
 };
 
+const isModalPreviewable = (mimeType) =>
+    mimeType?.startsWith("image/") ||
+    mimeType?.startsWith("video/") ||
+    mimeType?.startsWith("audio/");
+
 const Library = () => {
     const toast = useToast();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -82,6 +87,25 @@ const Library = () => {
     };
 
     const currentFolderName = breadcrumbs.at(-1)?.name ?? null;
+
+    const handleDownload = async (fileUrl, fileName) => {
+        try {
+            const response = await fetch(fileUrl);
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Download failed:', error);
+        }
+    };
 
     return (
         <div className="min-h-dvh bg-bg flex flex-col" onContextMenu={handleContextMenu}>
@@ -152,7 +176,10 @@ const Library = () => {
                                                             className="p-2 rounded-lg bg-white/20 hover:bg-white/30 text-white backdrop-blur-sm transition-colors">
                                                             <Eye size={14} />
                                                         </button>
-                                                        <a href={fileUrl(file.absolutePath)} download={file.name}
+                                                        <a onClick={(e) => {
+                                                            e.preventDefault();
+                                                            handleDownload(fileUrl(file.absolutePath), file.name);
+                                                        }}
                                                             className="p-2 rounded-lg bg-white/20 hover:bg-white/30 text-white backdrop-blur-sm transition-colors">
                                                             <Download size={14} />
                                                         </a>
@@ -162,11 +189,18 @@ const Library = () => {
                                                 <div className="aspect-square flex items-center justify-center bg-surface text-muted relative">
                                                     {fileIcon(file.mimeType)}
                                                     <div className="absolute inset-0 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        <button onClick={() => setPreview(file)}
+                                                        <button
+                                                            onClick={() => isModalPreviewable(file.mimeType)
+                                                                ? setPreview(file)
+                                                                : window.open(fileUrl(file.absolutePath), "_blank")
+                                                            }
                                                             className="p-2 rounded-lg bg-card border border-border hover:border-primary/40 text-muted hover:text-primary transition-colors">
                                                             <Eye size={14} />
                                                         </button>
-                                                        <a href={fileUrl(file.absolutePath)} download={file.name}
+                                                        <a onClick={(e) => {
+                                                            e.preventDefault();
+                                                            handleDownload(fileUrl(file.absolutePath), file.name);
+                                                        }}
                                                             className="p-2 rounded-lg bg-card border border-border hover:border-primary/40 text-muted hover:text-primary transition-colors">
                                                             <Download size={14} />
                                                         </a>
